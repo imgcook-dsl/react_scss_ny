@@ -1,11 +1,11 @@
-module.exports = function(schema, option) {
-  const {prettier} = option;
+module.exports = function (schema, option) {
+  const { _, prettier } = option;
 
   // imports
   const imports = [];
 
   // inline style
-  const style = {};
+  let style = ``;
 
   // Global Public Functions
   const utils = [];
@@ -19,7 +19,33 @@ module.exports = function(schema, option) {
   const isExpression = (value) => {
     return /^\{\{.*\}\}$/.test(value);
   }
-
+  // no unit style
+  const noUnitStyles = ['opacity', 'fontWeight'];
+  // box relative style
+  const boxStyleList = [
+    'fontSize',
+    'marginTop',
+    'marginBottom',
+    'paddingTop',
+    'paddingBottom',
+    'height',
+    'top',
+    'bottom',
+    'width',
+    'maxWidth',
+    'left',
+    'right',
+    'paddingRight',
+    'paddingLeft',
+    'marginLeft',
+    'marginRight',
+    'lineHeight',
+    'borderBottomRightRadius',
+    'borderBottomLeftRadius',
+    'borderTopRightRadius',
+    'borderTopLeftRadius',
+    'borderRadius'
+  ];
   const toString = (value) => {
     if ({}.toString.call(value) === '[object Function]') {
       return value.toString();
@@ -41,38 +67,36 @@ module.exports = function(schema, option) {
   };
 
   // convert to responsive unit, such as vw
-  const parseStyle = (style) => {
+  const parseStyle = (style, option = {}) => {
+    if (!style || style.length === 0) {
+      return '';
+    }
+    const { toVW, toREM } = option;
+    const styleData = [];
     for (let key in style) {
-      switch (key) {
-        case 'fontSize':
-        case 'marginTop':
-        case 'marginBottom':
-        case 'paddingTop':
-        case 'paddingBottom':
-        case 'height':
-        case 'top':
-        case 'bottom':
-        case 'width':
-        case 'maxWidth':
-        case 'left':
-        case 'right':
-        case 'paddingRight':
-        case 'paddingLeft':
-        case 'marginLeft':
-        case 'marginRight':
-        case 'lineHeight':
-        case 'borderBottomRightRadius':
-        case 'borderBottomLeftRadius':
-        case 'borderTopRightRadius':
-        case 'borderTopLeftRadius':
-        case 'borderRadius':
-          style[key] = (parseInt(style[key]) / _w).toFixed(2) + 'vw';
-          break;
+      let value = style[key];
+      if (boxStyleList.indexOf(key) != -1) {
+        if (toVW) {
+          value = (parseInt(value) / _w).toFixed(2);
+          value = value == 0 ? value : value + 'vw';
+        } else if (toREM && htmlFontsize) {
+          const valueNum = typeof value == 'string' ? value.replace(/(px)|(rem)/, '') : value;
+          const fontSize = (valueNum * (viewportWidth / width)).toFixed(2);
+          value = parseFloat((fontSize / htmlFontsize).toFixed(2));
+          value = value ? `${value}rem` : value;
+        } else {
+          value = parseInt(value).toFixed(2);
+          value = value == 0 ? value : value + 'px';
+        }
+        styleData.push(`${_.kebabCase(key)}: ${value}`);
+      } else if (noUnitStyles.indexOf(key) != -1) {
+        styleData.push(`${_.kebabCase(key)}: ${parseFloat(value)}`);
+      } else {
+        styleData.push(`${_.kebabCase(key)}: ${value}`);
       }
     }
-
-    return style;
-  }
+    return styleData.join(';') + ';';
+  };
 
   // parse function, return params and content
   const parseFunction = (func) => {
@@ -102,7 +126,7 @@ module.exports = function(schema, option) {
         return `'${value}'`;
       }
     } else if (typeof value === 'function') {
-      const {params, content} = parseFunction(value);
+      const { params, content } = parseFunction(value);
       return `(${params}) => {${content}}`;
     }
   }
@@ -110,7 +134,7 @@ module.exports = function(schema, option) {
   // parse async dataSource
   const parseDataSource = (data) => {
     const name = data.id;
-    const {uri, method, params} = data.options;
+    const { uri, method, params } = data.options;
     const action = data.type;
     let payload = {};
 
@@ -201,12 +225,7 @@ module.exports = function(schema, option) {
   const generateRender = (schema) => {
     const type = schema.componentName.toLowerCase();
     const className = schema.props && schema.props.className;
-    const classString = className ? ` style={styles.${className}}` : '';
-
-    if (className) {
-      style[className] = parseStyle(schema.props.style);
-    }
-
+    const classString = className ? ` className={style.${className}}` : '';
     let xml;
     let props = '';
 
@@ -216,20 +235,24 @@ module.exports = function(schema, option) {
       }
     })
 
-    switch(type) {
+    switch (type) {
       case 'text':
         const innerText = parseProps(schema.props.text, true);
         xml = `<span${classString}${props}>${innerText}</span>`;
+        style = `.${className}{${parseStyle(schema.props.style)}}`;
         break;
       case 'image':
         const source = parseProps(schema.props.src);
         xml = `<img${classString}${props} src={${source}} />`;
+        style = `.${className}{${parseStyle(schema.props.style)}}`;
         break;
       case 'div':
       case 'page':
       case 'block':
+      default:
         if (schema.children && schema.children.length) {
           xml = `<div${classString}${props}>${transform(schema.children)}</div>`;
+          style = `.${className}{${parseStyle(schema.props.style)}\n${transfromScss(schema.children)}}`;
         } else {
           xml = `<div${classString}${props} />`;
         }
@@ -248,7 +271,19 @@ module.exports = function(schema, option) {
 
     return xml;
   }
+  // scss parse 
+  const transfromScss = (node) => {
 
+    if (!node) {
+      return '';
+    }
+    let res = '';
+    for (let i = 0; i < node.length; i++) {
+      let className = (node[i].props && node[i].props.className) || 'content';
+      res += `.${className}{${parseStyle(node[i].props.style)}\n${transfromScss(node[i].children)}}\n`;
+    }
+    return res;
+  }
   // parse schema
   const transform = (schema) => {
     let result = '';
@@ -352,7 +387,7 @@ module.exports = function(schema, option) {
 
           import React, { Component } from 'react';
           ${imports.join('\n')}
-          import styles from './style.js';
+          import style from './index.scss';
           ${utils.join('\n')}
           ${classes.join('\n')}
           export default ${schema.componentName}_0;
@@ -360,9 +395,9 @@ module.exports = function(schema, option) {
         panelType: 'js',
       },
       {
-        panelName: `style.js`,
-        panelValue: prettier.format(`export default ${toString(style)}`, prettierOpt),
-        panelType: 'js'
+        panelName: `index.scss`,
+        panelValue: prettier.format(`${style}`, { parser: 'scss' }),
+        panelType: 'scss'
       }
     ],
     noTemplate: true
